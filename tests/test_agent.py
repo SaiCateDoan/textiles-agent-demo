@@ -50,7 +50,8 @@ async def test_langgraph_executes_artifacts_and_validates_citations(storage,samp
     calls=[]
     def call(name,args):
         return {'id':f'call_{len(calls)}_{name}','type':'function','function':{'name':name,'arguments':json.dumps(args)}}
-    responses=[Message(calls=[call('list_documents',{})]),Message(calls=[call('create_chart',dict(document_id=doc,group_by='定型温度_C',metric='缩水率_pct',chart_type='line')),call('create_scenario',dict(document_id=doc,parameter='定型温度_C',metric='缩水率_pct'))]),Message('已生成图表与滑块。不存在的引用 [C:invented]')]
+    source_ids=[r['id'] for r in s.chunks(doc)]
+    responses=[Message(calls=[call('read_document',{'document_id':doc})]),Message(calls=[call('create_chart',dict(option={'series':[{'type':'line','data':[[150,5.1],[180,2.45]]}]},source_ids=source_ids)),call('create_scenario',dict(document_id=doc,parameter='定型温度_C',metric='缩水率_pct'))]),Message('已生成图表与滑块。不存在的引用 [C:invented]')]
     async def create(**kwargs):
         calls.append(kwargs)
         return responses.pop(0).stream()

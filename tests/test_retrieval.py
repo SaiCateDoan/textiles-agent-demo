@@ -8,14 +8,13 @@ def test_numbers_do_not_confuse_units_dates_and_ranges(value,expected):
     assert number(value)==expected
 
 
-def test_whole_table_aggregate_exact(storage,sample_root):
+def test_chart_accepts_organized_data_without_column_bindings(storage,sample_root):
     doc=load_doc(storage,sample_root/'01_MES生产日报_模拟.csv');s,idx=storage
-    a=chart(s,doc,'机台','不良率_pct')
-    assert {p['name']:p['value'] for p in a['data']}=={'定型A':1.25,'定型B':2.1,'定型C':.85}
-    assert len(a['source_ids'])==12 and a['skipped_rows']==0
-    assert all(p['count']==4 for p in a['data'])
-    with pytest.raises(ValueError,match='列名不存在'):chart(s,doc,'机台','不良率')
-    with pytest.raises(ValueError):chart(s,doc,'机台','不良率_pct','execute_python')
+    option={'series':[{'type':'bar','data':[1.25,2.1,.85]}]}
+    a=chart(s,option,[r['id'] for r in s.chunks(doc)],title='机台平均不良率')
+    assert a['option']['series'][0]['data']==[1.25,2.1,.85]
+    assert len(a['source_ids'])==12 and a['data_origin']=='model_organized'
+    assert 'group_by' not in a and 'metric' not in a
 
 
 def test_scenario_range_neighbours_and_reference_change(storage,sample_root):
@@ -56,9 +55,9 @@ def test_stale_revisions_never_used(storage,sample_root):
     assert hits and all(h['revision']==2 for h in hits)
 
 
-def test_chart_source_snapshot_matches_calculation_during_publish(storage,sample_root):
+def test_chart_source_snapshot_matches_configuration_during_publish(storage,sample_root):
     s,idx=storage;doc=load_doc(storage,sample_root/'01_MES生产日报_模拟.csv')
-    result=chart(s,doc,'机台','不良率_pct')
+    result=chart(s,{'series':[{'type':'bar','data':[1.2]}]},[s.chunks(doc)[0]['id']])
     originals=result['_source_rows']
     changed=s.chunks(doc)
     for c in changed:

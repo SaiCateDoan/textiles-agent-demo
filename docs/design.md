@@ -16,12 +16,13 @@
 | 多模态 | [backend/multimodal.py](../backend/multimodal.py)：`collect`、`enrich`、`persist_images` | 图片定位、视觉判断、原位替换、原图/预览存储 |
 | 图片点位与检索文本 | [backend/media.py](../backend/media.py)：`split_anchored`、`retrieval_text` | 不可拆图片标记、分块归属、图像语义转入文本索引 |
 | 元数据 | [backend/store.py](../backend/store.py)：`Store` | SQLite 文档、分块、图片元数据和消息快照 |
-| 向量及数值工具 | [backend/retrieval.py](../backend/retrieval.py)：`VectorIndex`、`chart`、`scenario`、`evaluate` | LanceDB、混合检索、图表聚合、历史工况计算 |
+| 向量及数值工具 | [backend/retrieval.py](../backend/retrieval.py)：`VectorIndex`、`scenario`、`evaluate` | LanceDB、混合检索、历史工况计算 |
+| 图表工具 | [charts.py](../backend/charts.py)：`chart`、`normalize_option` | 接收模型整理的图表配置，校验来源、版本及声明式配置 |
 | Agent | [backend/agent.py](../backend/agent.py)：`TextileAgent.run` | LangGraph 模型/工具循环、文档范围、来源与产物收集 |
 | Responses 与回合记录 | [responses.py](../backend/responses.py)、[turns.py](../backend/turns.py) | 无状态协议、文字增量、调用配对、有序回复及中断保存 |
-| 呈现 | [frontend/src/main.jsx](../frontend/src/main.jsx)、[Passage.jsx](../frontend/src/Passage.jsx) | `DataChart`、`Scenario`、原位附图和回答来源 |
+| 呈现 | [DataChart.jsx](../frontend/src/DataChart.jsx)、[main.jsx](../frontend/src/main.jsx)、[Passage.jsx](../frontend/src/Passage.jsx) | ECharts、工况滑块、原位附图和回答来源 |
 
-**图表和控件的生成都是工具实现。** 模型选择文档、列名和计算方式，图表产物由后端计算，前端不会执行模型生成的代码。文件入库由持久任务及固定数量工作协程完成，可随 API 内嵌启动，也可独立运行，不是 LangGraph 中的节点。并发、恢复和部署说明见第 7 节。
+**图表和控件的生成都是工具实现。** 图表由模型根据已查阅资料整理数据和选择布局，后端校验配置与来源，前端使用声明式绘图库呈现；不会执行模型生成的代码。工况控件继续由后端从结构化观测计算。文件入库由持久任务及固定数量工作协程完成，可随 API 内嵌启动，也可独立运行，不是 LangGraph 中的节点。并发、恢复和部署说明见第 7 节。
 
 ## 2. 数据前置清洗
 
@@ -61,7 +62,7 @@
 | PDF | 恢复阅读顺序、提取表格、按条件做页面或内嵌图 OCR | 保留页码及 OCR 来源；复杂版面仍需人工核对 |
 | 独立图片、TIFF 多帧 | 方向修正、颜色转换、尺寸控制、OCR | 普通模式依赖可提取文字；无文字图需开启多模态才能获得视觉描述 |
 
-表格不先拼成一大段自然语言。`table_blocks` 把每个数据行表示为一块，同时保留 `fields`。这使回答可以检索该行，图表也能用原始字段计算，而不必从模型生成的句子重新提取数字。
+表格不先拼成一大段自然语言。`table_blocks` 把每个数据行表示为一块，同时保留 `fields`。这使回答可以检索该行、模型可以读取字段后整理图表数据，工况控件也能用原字段计算。图表本身不再要求数据必须来自 `fields`。
 
 ### 2.4 PDF 为什么需要单独的版面处理
 
@@ -244,7 +245,7 @@ flowchart LR
 | `list_documents` | 可选 `query`、`offset` | 按名称筛选、每次最多 50 份可检索文档，返回下一页位置；列名在入库时汇总，不加载全部分块 |
 | `search_knowledge` | `query`、可选 `document_id` | 默认最多 8 个带位置、版本、图像的混合检索分块；查询截取最多 1000 字符 |
 | `read_document` | `document_id`、可选 `offset` | 按原顺序每次读 30 块，返回总数及下一页偏移，补足 top-k 没覆盖的上下文 |
-| `create_chart` | `document_id`、`group_by`、`metric`，可选聚合/类型 | 在完整结构化表格上统计，返回图表产物而不是图片 URL 或可执行代码 |
+| `create_chart` | `option`、`source_ids`，可选 `title`、`description` | 由文章/表格/转写数据组织声明式图表，可跨文档、自选图形与坐标，不绑定原始列名 |
 | `create_scenario` | `document_id`、`parameter`、`metric`，可选 `direction` | 根据有效历史数值生成范围、步长、默认值、观测点及来源，供前端建立滑块 |
 
 JSON 工具 schema 约束参数形状，执行函数还校验文档状态、检索范围、列名及允许的操作。工具 schema 不是完整的事实验证器，后端业务校验仍然必要。
@@ -266,17 +267,39 @@ JSON 工具 schema 约束参数形状，执行函数还校验文档状态、检�
 
 420 是字符分块预算，不是嵌入模型 token 预算；长表格行和完整视觉描述可能超过嵌入模型上下文。SQLite 和 BM25 仍保留完整内容，但向量模型的有效输入范围需要用业务样本评估。
 
-### 5.3 图表：从完整表格计算，不从检索片段抽样
+### 5.3 图表：统一的宽松声明式接口
 
-`create_chart` 在 [retrieval.py](../backend/retrieval.py) 调用 `chart`，只读取 `kind=table` 且有 `fields` 的行。即使检索只找出 8 条，图表统计也会读取选中文档的完整结构化表格。
+`create_chart` 只保留一个生成接口，由 [charts.py](../backend/charts.py) 实现：必填 `option` 和 `source_ids`，可选 `title`、`description`。原来的 `document_id/group_by/metric/aggregation/chart_type` 参数和自动表格聚合逻辑已经移除，不提供严格/宽松模式切换。
 
-模型必须给出与原表完全一致的列名及单位。`number` 接受有限数值、带千分位的数值字符串和百分数字符串；日期、范围、不等式及 `3 kg` 这类混合内容不会被猜成数值。百分数 `2.1%` 对应数值 2.1，单位由原列名解释，不自动换成比例 0.021。
+模型先通过检索或原文读取取得证据，再从正文、表格、OCR 或视觉转写中提取/整理数值，提交 ECharts 的纯 JSON 配置。`series` 可为单对象或数组，支持 `dataset`、`encode` 和多个系列；图形类型没有 bar/line 枚举限制，坐标轴可以缺省、为数组、采用时间/数值/分类或其他坐标系。饼图和环形图不需要 X/Y 轴，跨文档图表也无需指定单个文档。
 
-支持 `mean`、`sum`、`min`、`max`、`count`，其中 `count` 统计通过数值校验的记录，不是所有原始行。聚合默认 `mean`，图形默认 `bar`，也支持 `line`；缺失/非数值行会排除并报告数量，超过 100 个分组会拒绝，避免渲染无意义的大图。
+例如文章写明「棉45%、涤纶35%、粘胶20%」，可以直接调用：
 
-产物包含 `type=chart`、`data`、分组/指标/聚合口径、有效来源 ID、原文档 ID 和版本。前端 `DataChart` 只负责 SVG 绘制、标签和数据表，不重算统计值。
+```json
+{
+  "title": "模拟纤维配比",
+  "source_ids": ["已查阅的文段ID"],
+  "description": "按文章明示的质量百分比整理",
+  "option": {
+    "legend": {},
+    "series": [{
+      "type": "pie",
+      "radius": ["40%", "70%"],
+      "data": [{"name": "棉", "value": 45}, {"name": "涤纶", "value": 35}, {"name": "粘胶", "value": 20}]
+    }]
+  }
+}
+```
 
-例如演示 MES 表按机台对不良率做算术平均，A=1.25%、B=2.10%、C=0.85%。这不能称为按产量加权的总体不良率：要算总体口径，需要正确分子、分母和相应实现，不能仅改变模型措辞。
+来源 ID 必须已经由本轮工具返回，仍处于当前文档范围，且文本及版本未变化。后端返回引用的实际文段快照和所有来源文档版本；单文档产物继续带 `document_id/revision`，多文档时保存在 `documents`。这验证的是来源存在和版本一致性，不代表模型提取的每个点、单位或算术结果都已经被程序逐项核验。
+
+该工具不再自动扫描完整表格或执行固定聚合。模型负责按任务读取足够的上下文、说明原始值与整理/计算值以及统计口径，不能把检索片段称为全文总量。界面标注「据 N 个来源文段整理」，允许查看配置中实际提供的数据和引用来源。原始表格仍保留在知识库，精确算术或生产级统计需要另行验证，不能沿用旧版“后端完整表格自动统计”的保证。
+
+后端仅保留可渲染性与资源边界：至少一个带 `type` 的系列、有限 JSON 数值、最多 100 个来源、配置不超过 1MB、嵌套不超过 32 层。根据 [ECharts 官方安全说明](https://echarts.apache.org/handbook/en/best-practices/security/)，图表不执行 JS 回调，tooltip 强制 richText，移除外部图片、网页链接和 HTML 数据面板，拒绝动态筛选正则。这些边界不限制坐标轴数量、名称或布局。
+
+前端 [DataChart.jsx](../frontend/src/DataChart.jsx) 按需加载 ECharts，在容器尺寸变化时自适应。`chartOptions.js` 对缺省的普通笛卡尔坐标补充展示默认值，对明确配置的坐标、时间轴、多轴及无轴图不强行改写。已有聊天的旧式 `data` 图表仅在显示层转换成同一绘图库的配置，不恢复旧生成工具。
+
+验证：121 项后端测试、9 项前端测试通过；前端测试用真实 ECharts 离线绘制环形图、散点、时间序列与多轴图。`scripts/acceptance_charts.py` 使用真实 DeepSeek 和 BGE，只给一段没有表格的模拟文章，8 项检查通过，生成环形图及散点图，原文明示的配比和观测数值均保留，来源正确，两张实际生成的配置均成功渲染。该测试使用独立 `.cache` 数据，不改变现有知识库，也不作为浏览器视觉验收。
 
 ### 5.4 控件：生成配置与拖动计算是两个阶段
 
@@ -310,7 +333,8 @@ sequenceDiagram
 | [test_multimodal.py](../tests/test_multimodal.py) | 原子点位、多图归属、长独立描述、局部邻文和各格式定位 |
 | [test_api.py](../tests/test_api.py) | 上传、版本、编辑、重新解析、SSE 和会话 |
 | [test_multimodal_api.py](../tests/test_multimodal_api.py) | 默认关闭/无图回退、视觉故障、图像接口、带图编辑及删除生命周期 |
-| [test_retrieval.py](../tests/test_retrieval.py) | 真实 LanceDB 读写、范围/版本、图表准确值及工况计算 |
+| [test_retrieval.py](../tests/test_retrieval.py) | 真实 LanceDB 读写、范围/版本、图表配置及工况计算 |
+| [test_charts.py](../tests/test_charts.py) | 文章/跨文档图表、自由坐标/系列、引用版本与配置边界 |
 | [test_agent.py](../tests/test_agent.py) | LangGraph 工具循环、产物和引用 ID 校验 |
 | [test_responses.py](../tests/test_responses.py) | 先回复再工具、无状态回传、调用配对、中断流/停止/超时保存及视觉请求格式 |
 | [test_ingestion_jobs.py](../tests/test_ingestion_jobs.py) | 10 万积压任务的固定工作数、并发领取、租约接管、资源预算、超时、恢复、缓存和旧版保留 |

@@ -33,9 +33,10 @@ async def test_commentary_tools_artifacts_final_are_streamed_and_preserved_in_or
     store,index=storage
     doc=load_doc(storage,sample_root/'02_定型工况实验_模拟.csv')
     citation=store.chunks(doc)[0]['id']
-    responses=[Message('我先确认资料。',[tool('t1','list_documents')]),
+    source_ids=[r['id'] for r in store.chunks(doc)]
+    responses=[Message('我先确认资料。',[tool('t1','read_document',document_id=doc)]),
                Message('已找到实验表，接着计算图表和控件。',[
-                   tool('t2','create_chart',document_id=doc,group_by='定型温度_C',metric='缩水率_pct'),
+                   tool('t2','create_chart',option={'series':[{'type':'line','data':[[150,5.1],[180,2.45]]}]},source_ids=source_ids),
                    tool('t3','create_scenario',document_id=doc,parameter='定型温度_C',metric='缩水率_pct')]),
                Message(f'结果仅供历史工况参考。[C:{citation}]')]
     agent,requests=await agent_with_responses(storage,responses)

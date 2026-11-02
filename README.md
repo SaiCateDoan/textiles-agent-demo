@@ -12,7 +12,7 @@
 - **可恢复入库**：持久任务队列、固定工作数、解析超时隔离、视觉限流和成功结果缓存；重新解析失败仍可检索已发布版本。
 - **普通入库**：处理文本、Office、表格、PDF 与图片 OCR，保留页码、工作表和物理行号。
 - **可选多模态入库**：DeepSeek 判断图片应转成文字还是保留原图；原图挂载到具体文段，一个分块可以关联多张图片。无文字独立图片生成描述并附图；无图文件自动走普通流程。
-- **图表与控件**：Agent 调用后端工具生成柱状图、折线图和工况滑块。图表统计来自完整结构化表格，滑块建议根据历史观测计算，不执行模型生成的代码。
+- **图表与控件**：Agent 可从文章、表格或转写资料中整理图表，支持饼图、散点、多系列、多坐标轴等，不绑定原始列名；图表保留来源。工况滑块按历史观测计算，不执行模型生成的代码。
 
 详细实现与取舍见 [关键设计说明](docs/design.md)。多模态的使用方式、接口字段和格式边界见 [多模态入库说明](docs/multimodal.md)。
 
@@ -138,17 +138,19 @@ npm.cmd --prefix frontend run dev
 
 `create_chart` 和 `create_scenario` 都是 Agent 工具。滑块生成后，拖动通过独立后端接口计算，无需每次询问大模型。历史相近工况均值不代表因果预测、生产配方或最优工艺；新版本发布后旧控件会拒绝继续计算，需要重新生成。
 
+图表只使用一个宽松接口：模型提交图表配置和已查阅的来源文段，可直接提取文章内部数据，自选系列、坐标或无坐标轴图形。它不再自动按完整表格聚合；提取与计算口径由模型在说明中交代，来源存在不等于每个数据点已逐项核验。可导入 [纯文章图表样本](samples/10_文章图表数据_模拟.txt)，要求生成纤维占比环形图和温度—缩水率散点图。
+
 ## 技术栈与代码导航
 
 | 层 | 实现 | 主要入口 |
 |---|---|---|
-| 界面 | React 19、Vite、SVG 图表、滑块、Markdown | [main.jsx](frontend/src/main.jsx)、[Passage.jsx](frontend/src/Passage.jsx) |
+| 界面 | React 19、Vite、ECharts、滑块、Markdown | [DataChart.jsx](frontend/src/DataChart.jsx)、[main.jsx](frontend/src/main.jsx)、[Passage.jsx](frontend/src/Passage.jsx) |
 | 接口与任务 | FastAPI、异步导入任务、SSE | [main.py](backend/main.py) |
 | 并发与恢复 | SQLite 租约队列、隔离解析、检查点、内容缓存 | [pipeline.py](backend/pipeline.py)、[jobs.py](backend/jobs.py)、[worker.py](backend/worker.py) |
 | Agent 编排 | LangGraph、DeepSeek 工具调用循环 | [agent.py](backend/agent.py) |
 | 前置清洗 | 多格式解析、PDF 显示坐标、RapidOCR | [ingest.py](backend/ingest.py)、[pdf_layout.py](backend/pdf_layout.py) |
 | 多模态入库 | 图片定位、视觉判断、原子点位、图文关联 | [multimodal.py](backend/multimodal.py)、[media.py](backend/media.py) |
-| 检索与计算 | BGE、jieba/BM25、RRF、图表聚合、近邻工况 | [retrieval.py](backend/retrieval.py) |
+| 检索与计算 | BGE、jieba/BM25、RRF、图表配置及来源、近邻工况 | [retrieval.py](backend/retrieval.py)、[charts.py](backend/charts.py) |
 | 数据持久化 | SQLite 元数据/会话；LanceDB 派生向量 | [store.py](backend/store.py) |
 
 目录约定：
@@ -203,6 +205,9 @@ uv run --frozen python scripts/acceptance_multimodal.py
 
 # 真实 Responses、图片分析、边回复边检索、图表及滑块；使用独立测试数据目录
 uv run --frozen python scripts/acceptance_responses.py
+
+# 真实模型从纯文章生成无轴图和散点图，并离线验证实际图表渲染
+uv run --frozen python scripts/acceptance_charts.py
 
 # 并发入库冒烟：真实解析与嵌入，不调用聊天/视觉；成功后删除自己的模拟文档
 uv run --frozen python scripts/benchmark_ingestion.py --documents 40 --concurrency 12

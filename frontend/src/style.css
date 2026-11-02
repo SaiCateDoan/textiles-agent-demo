@@ -2286,3 +2286,16 @@ main, .chat-scroll, .chat-history {
 .turn-progress { margin-top:18px; }
 .turn-notice { display:flex; align-items:flex-start; gap:8px; margin-top:14px; font-size:14px; color:#8a654b; line-height:1.7; }
 .turn-notice > svg { flex-shrink:0; margin-top:4px; }
+
+/* Charts choose their own coordinate systems and series layouts. */
+.chart-stage { position:relative; width:100%; min-width:0; }
+.chart-canvas { width:100%; height:440px; min-width:0; }
+.chart-loading { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; gap:10px; color:var(--muted, #60746a); pointer-events:none; font-size:14px; }
+.chart-description { padding:16px 22px 0; margin:0; white-space:pre-line; line-height:1.75; }
+.chart-render-error { margin:0 20px 16px; }
+.chart-source-links { display:flex; flex-wrap:wrap; gap:6px; }
+.chart-foot { display:flex; flex-wrap:wrap; align-items:center; gap:12px; }
+.chart-foot > details { width:100%; overflow-x:auto; }
+.chart-table { padding:12px 0; }
+.chart-table td { max-width:360px; overflow-wrap:anywhere; }
+@media(max-width:640px) { .chart-canvas { height:360px; } }

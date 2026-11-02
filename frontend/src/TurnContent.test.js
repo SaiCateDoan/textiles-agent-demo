@@ -6,7 +6,7 @@ import {createServer} from 'vite';
 
 test('tool progress disappears into continuous reply text while artifacts stay in order',async()=>{
   // Compile repository JSX in memory. No browser/page access or HTTP listener.
-  const server=await createServer({server:{middlewareMode:true,hmr:false,watch:null},appType:'custom'});
+  const server=await createServer({cacheDir:'.cache/ssr-tests',optimizeDeps:{noDiscovery:true,include:[]},server:{middlewareMode:true,hmr:false,watch:null},appType:'custom'});
   try{
     const {default:TurnContent}=await server.ssrLoadModule('/src/TurnContent.jsx');
     const message={content:'先说明\n\n最后结论',status:'completed',sources:[],artifacts:[{id:'a',type:'chart'}],parts:[

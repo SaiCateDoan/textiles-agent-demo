@@ -4,6 +4,7 @@ Idempotent fixture import by name; writes factual machine-readable evidence.
 Browser acceptance is recorded separately, never inferred from API success.
 """
 import json
+import math
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -63,8 +64,9 @@ def main():
         check('real_deepseek_langgraph_tools',result is not None and any(t['name']=='list_documents' for t in result['trace']) and all(t['ok'] for t in result['trace']),result.get('trace') if result else None)
         charts=[a for a in artifacts if a['type']=='chart'];controls=[a for a in artifacts if a['type']=='scenario']
         check('chart_and_interactive_control',len(charts)>=2 and len(controls)>=1,artifacts)
-        mes=next((a for a in charts if a['metric']=='不良率_pct'),None)
-        check('chart_exact_ground_truth',mes and {p['name']:p['value'] for p in mes['data']}=={'定型A':1.25,'定型B':2.1,'定型C':.85},mes)
+        from acceptance_charts import plotted_numbers
+        mes=next((a for a in charts if '不良率' in json.dumps(a.get('option',{}),ensure_ascii=False)+a.get('title','')),None)
+        check('organized_chart_expected_values',mes and all(any(math.isclose(value,n) for n in plotted_numbers(mes)) for value in [1.25,2.1,.85]),mes)
         scenario=controls[0]
         body={k:scenario[k] for k in ['document_id','parameter','metric','direction','revision']}
         low=c.post('/api/scenarios/evaluate',json={**body,'value':150});high=c.post('/api/scenarios/evaluate',json={**body,'value':180})

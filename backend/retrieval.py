@@ -16,6 +16,7 @@ from filelock import FileLock
 from .media import retrieval_text
 from .cache import ContentCache, digest
 from .config import settings
+from .charts import chart
 
 
 class EmbeddingGate:
@@ -215,34 +216,6 @@ def table_rows(store, doc_id):
     if not rows:
         raise ValueError("该文档没有结构化表格，请导入 CSV/Excel 或可识别的带表格文档")
     return rows
-
-
-def chart(store, document_id, group_by, metric, aggregation="mean", chart_type="bar"):
-    if aggregation not in {"sum", "mean", "min", "max", "count"} or chart_type not in {"bar", "line"}:
-        raise ValueError("不支持的聚合或图表类型")
-    rows = table_rows(store, document_id)
-    groups = defaultdict(list)
-    ids = []
-    skipped = 0
-    if not any(group_by in r["fields"] and metric in r["fields"] for r in rows):
-        raise ValueError("列名不存在，请使用 list_documents 返回的完整原始列名（包含单位）")
-    for row in rows:
-        value = number(row["fields"].get(metric))
-        if value is None or group_by not in row["fields"]:
-            skipped += 1
-            continue
-        groups[str(row["fields"][group_by])].append(value)
-        ids.append(row["id"])
-    if not groups:
-        raise ValueError("所选指标没有有效数值")
-    if len(groups) > 100:
-        raise ValueError("分组超过 100，请选择批次/机台等更粗粒度分组")
-    reducers = {"sum": sum, "mean": lambda vs: sum(vs)/len(vs), "min": min, "max": max, "count": len}
-    numeric_groups = all(number(k) is not None for k in groups)
-    ordered = sorted(groups.items(), key=lambda pair: number(pair[0]) if numeric_groups else pair[0])
-    data = [{"name": k, "value": round(reducers[aggregation](v), 4), "count": len(v)} for k, v in ordered]
-    used = set(ids)
-    return dict(type="chart", title=f"{group_by} / {metric}", chart_type=chart_type, group_by=group_by, metric=metric, aggregation=aggregation, data=data, source_ids=ids, document_id=document_id, skipped_rows=skipped, total_rows=len(rows),revision=rows[0]["revision"],_source_rows=[r for r in rows if r["id"] in used])
 
 
 def scenario(store, document_id, parameter, metric, direction="min"):
