@@ -1,0 +1,12 @@
+{
+  "mes_mean_defect_pct": {
+    "定型A": 1.25,
+    "定型B": 2.1,
+    "定型C": 0.85
+  },
+  "mes_total_output_m": 62700,
+  "experiment_rows": 15,
+  "scan_batch": "TX-202610-003",
+  "scan_weight": 146,
+  "scan_shrinkage_pct": 4.2
+}

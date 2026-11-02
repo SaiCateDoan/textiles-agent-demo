@@ -1,0 +1,26 @@
+.venv/
+node_modules/
+frontend/dist/
+data/
+.env
+.env.*
+!.env.example
+.cache/
+__pycache__/
+.pytest_cache/
+*.log
+
+# Generated acceptance payloads contain local document/chat IDs and source snapshots.
+# Keep authored audit notes, regenerate machine reports and previews when needed.
+/artifacts/*
+!/artifacts/*.md
+
+# Local credentials and operating-system files.
+.aws/
+*.pem
+*.key
+Thumbs.db
+.DS_Store
+
+# External course material is optional local input, not MIT project content.
+/samples/09_NPTEL_Reactive_Dyeing_Public.pdf

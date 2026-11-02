@@ -1,0 +1,25 @@
+[project]
+name = "textile-agent"
+version = "0.1.0"
+description = "Chinese textile agentic RAG workbench"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "fastapi>=0.115,<1", "uvicorn[standard]>=0.34,<1", "python-multipart>=0.0.20",
+  "langgraph>=1.0,<2", "openai>=1.100,<3", "lancedb>=0.25,<1",
+  "fastembed>=0.7,<1", "rapidocr-onnxruntime>=1.4.4,<2", "pymupdf>=1.25,<2",
+  "openpyxl>=3.1,<4", "python-docx>=1.1,<2", "python-pptx>=1.0,<2",
+  "beautifulsoup4>=4.13,<5", "charset-normalizer>=3.4,<4", "Pillow>=11,<13",
+  "jieba>=0.42.1", "rank-bm25>=0.2.2", "pydantic-settings>=2.8,<3", "xlrd>=2,<3",
+  "filelock>=3.16,<4",
+  "anyio>=4,<5",
+]
+
+[dependency-groups]
+dev = ["pytest>=8,<10", "httpx>=0.28,<1", "pytest-asyncio>=1,<2", "reportlab>=4,<5"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "--basetemp=.cache/pytest"
