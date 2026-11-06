@@ -50,8 +50,12 @@ async def main():
         assets=persist_images(result,work,doc_id,1)
         chunks=split_blocks(result.blocks)
         for chunk in chunks:chunk.update(id=uid(),revision=1)
+        from backend.datasets import stage_datasets,write_datasets
+        datasets=stage_datasets(store,doc_id,1,result,chunks)
         await asyncio.to_thread(index.replace,doc_id,chunks,1)
         store.replace_chunks(doc_id,chunks,assets)
+        with store.connect() as connection:
+            write_datasets(connection,doc_id,1,datasets)
         store.update_doc(doc_id,status='ready',chunks=len(chunks),image_count=len(assets),retained_images=sum(im['decision']=='retain' for im in assets))
         return doc_id
     try:

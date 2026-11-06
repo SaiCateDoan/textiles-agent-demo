@@ -19,23 +19,24 @@ def test_chinese_normalize_encoding_and_overlap():
 
 def test_csv_preserves_units_rows_and_chinese(sample_root):
     data=extract(sample_root/'01_MES生产日报_模拟.csv','.csv')
-    assert len(data.blocks)==12
-    assert data.blocks[0].fields['不良率_pct']=='1.2'
-    assert data.blocks[2].fields['批次']=='TX-202610-003'
-    assert '行 2' in data.blocks[0].locator
+    assert len(data.blocks)==1 and data.datasets[0]['row_count']==12
+    dataset=data.datasets[0]; names=[c['name'] for c in dataset['columns']]
+    assert dataset['rows'][0][names.index('不良率_pct')+1]=='1.2'
+    assert dataset['rows'][2][names.index('批次')+1]=='TX-202610-003'
+    assert dataset['rows'][0][0]==2
 
 
 def test_markdown_tables_keep_structured_data(tmp_path):
     p=tmp_path/'table.md';p.write_text('# 数据\n|温度_C|缩水率_pct|\n|---|---|\n|160|3.7|\n|170|2.7|',encoding='utf8')
     e=extract(p,'.md')
-    tables=[b for b in e.blocks if b.kind=='table']
-    assert len(tables)==2 and tables[0].fields['温度_C']=='160'
+    tables=[b for b in e.blocks if b.kind=='document_table']
+    assert len(tables)==1 and tables[0].fields['rows']==[['160','3.7'],['170','2.7']]
 
 
 def test_html_strips_scripts_and_keeps_table(tmp_path):
     p=tmp_path/'test.html';p.write_text('<h1>工艺</h1><script>secret()</script><table><tr><th>温度_C</th><th>批次</th></tr><tr><td>165</td><td>TX003</td></tr></table>',encoding='utf8')
     e=extract(p,'.html')
-    assert any(b.fields.get('温度_C')=='165' for b in e.blocks)
+    assert any(b.fields.get('rows')==[['165','TX003']] for b in e.blocks)
     assert 'secret' not in '\n'.join(b.text for b in e.blocks)
 
 
@@ -47,9 +48,9 @@ def test_office_parser_fixtures(tmp_path):
     d=Document();d.add_paragraph('纺织工艺 TX-202610-003');t=d.add_table(rows=2,cols=2)
     for cell,text in zip([t.cell(0,0),t.cell(0,1),t.cell(1,0),t.cell(1,1)],['温度_C','缩水率_pct','165','3.2']):cell.text=text
     p=tmp_path/'test.docx';d.save(p)
-    e=extract(p,'.docx');assert any(b.fields.get('温度_C')=='165' for b in e.blocks)
+    e=extract(p,'.docx');assert any(b.fields.get('rows')==[['165','3.2']] for b in e.blocks)
     wb=Workbook();ws=wb.active;ws.title='测试';ws.append(['机台','不良率_pct']);ws.append(['定型A',1.2]);p=tmp_path/'test.xlsx';wb.save(p)
-    e=extract(p,'.xlsx');assert e.blocks[0].fields['机台']=='定型A' and e.warnings
+    e=extract(p,'.xlsx');assert e.datasets[0]['rows'][0][1]=='定型A' and e.warnings
     ppt=Presentation();slide=ppt.slides.add_slide(ppt.slide_layouts[1]);slide.shapes.title.text='纯棉平纹工艺';p=tmp_path/'test.pptx';ppt.save(p)
     assert '纯棉' in extract(p,'.pptx').blocks[0].text
 
@@ -81,9 +82,9 @@ def test_multiframe_tiff_and_blank_ocr(tmp_path):
 
 def test_table_duplicate_headers_and_empty_rows():
     b=table_blocks([['值','值'],['1','2'],['','']], '表格')
-    assert len(b)==1 and b[0].fields=={'值':'1','值_2':'2'}
+    assert len(b)==1 and b[0].fields['headers']==['值','值_2'] and b[0].fields['rows']==[['1','2']]
     physical=table_blocks([[],['温度_C'],[],['165']], '表格')
-    assert physical[0].locator.endswith('行 4')
+    assert physical[0].fields['source_rows']==[4]
 
 
 def test_corrupt_pdf_rejected(tmp_path):

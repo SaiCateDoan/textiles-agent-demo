@@ -49,6 +49,13 @@ class Store:
               FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS images_doc ON images(document_id);
+            CREATE TABLE IF NOT EXISTS datasets(
+              id TEXT PRIMARY KEY, document_id TEXT NOT NULL, revision INTEGER NOT NULL,
+              path TEXT NOT NULL, metadata TEXT NOT NULL,
+              FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS datasets_doc ON datasets(document_id,revision);
+            CREATE TABLE IF NOT EXISTS dataset_queries(id TEXT PRIMARY KEY,payload TEXT NOT NULL);
             """)
             for table, additions in {
                 "documents": {"multimodal": "INTEGER DEFAULT 0", "image_count": "INTEGER DEFAULT 0", "retained_images": "INTEGER DEFAULT 0", "active_revision": "INTEGER DEFAULT 0", "content_hash": "TEXT DEFAULT ''", "columns_json": "TEXT DEFAULT '[]'"},
@@ -175,7 +182,10 @@ class Store:
             cur = c.execute("INSERT INTO chunks(id,document_id,ordinal,text,locator,kind,fields,revision,image_ids,fts_indexed) VALUES(?,?,?,?,?,?,?,?,?,1)",
                 (x["id"],doc_id,i,x["text"],x["locator"],x["kind"],json.dumps(x.get("fields",{}),ensure_ascii=False),x.get("revision",1),json.dumps(x.get("image_ids",[]))))
             c.execute("INSERT INTO chunk_fts(rowid,id,document_id,terms) VALUES(?,?,?,?)", (cur.lastrowid,x["id"],doc_id,terms))
-        columns = sorted({k for x in chunks for k in x.get("fields",{})})
+        columns = sorted({k for x in chunks for k in (
+            [c["name"] for c in x.get("fields",{}).get("columns",[])] if x["kind"]=="dataset" else
+            x.get("fields",{}).get("headers",[]) if x["kind"]=="document_table" else
+            x.get("fields",{}) if x["kind"]=="table" else [])})
         c.execute("UPDATE documents SET columns_json=? WHERE id=?", (json.dumps(columns,ensure_ascii=False),doc_id))
 
     def chunks_by_ids(self, ids):

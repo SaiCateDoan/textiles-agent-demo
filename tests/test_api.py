@@ -34,12 +34,13 @@ def test_upload_empty_unsupported_and_traversal(client):
     assert client.get('/api/documents/not-a-valid-id/chunks').status_code==404
 
 
-def test_edit_reindexes_text_and_structured_values(client,storage,sample_root):
-    doc=load_doc(storage,sample_root/'01_MES生产日报_模拟.csv');s,idx=storage
+def test_edit_reindexes_text_and_structured_values(client,storage,tmp_path):
+    path=tmp_path/'table.md';path.write_text('| 机台 | 不良率_pct |\n|---|---|\n|A|1.2|',encoding='utf8')
+    doc=load_doc(storage,path);s,idx=storage
     row=s.chunks(doc)[0]
-    text=row['text'].replace('不良率_pct: 1.2','不良率_pct: 3.2')
+    text=row['text'].replace('1.2','3.2')
     r=client.put('/api/chunks/'+row['id'],json={'text':text,'revision':1})
-    assert r.status_code==200 and r.json()['fields']['不良率_pct']=='3.2'
+    assert r.status_code==200 and r.json()['fields']['rows']==[['A','3.2']]
     assert r.json()['revision']==2 and s.document(doc)['revision']==2
     assert {v['revision'] for v in idx.table.to_arrow().to_pylist()}=={2}
     assert client.put('/api/chunks/'+row['id'],json={'text':text,'revision':1}).status_code==409

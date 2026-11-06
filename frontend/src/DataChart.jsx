@@ -26,8 +26,8 @@ export default function DataChart({artifact:a,onSource}){
   },[option]);
   const sources=a.source_ids||[];
   return <section className="artifact flexible-chart">
-    <div className="artifact-head"><span className="square-icon"><ChartNoAxesCombined size={17}/></span><div><b>{a.title}</b><small>{a.option?`据 ${sources.length} 个来源文段整理`:`${({mean:'算术平均',sum:'合计',min:'最小值',max:'最大值',count:'有效数值行数'})[a.aggregation]||'历史图表'} · ${a.total_rows||0} 行原始数据`}{a.revision?` · v${a.revision}`:''}</small></div><span className="tag">来源可追溯</span></div>
-    {a.description&&<p className="chart-description">{a.description}</p>}
+    <div className="artifact-head"><span className="square-icon"><ChartNoAxesCombined size={17}/></span><div><b>{a.title}</b><small>{a.data_origin==='query_result'?`查询结果 · ${a.total_rows} 行数据集记录`:a.option?`据 ${sources.length} 个来源文段整理`:`${({mean:'算术平均',sum:'合计',min:'最小值',max:'最大值',count:'有效数值行数'})[a.aggregation]||'历史图表'} · ${a.total_rows||0} 行原始数据`}{a.revision?` · v${a.revision}`:''}</small></div><span className="tag">来源可追溯</span></div>
+    {a.sql&&<details className="chart-query"><summary>查看计算口径与查询</summary><pre>{a.sql}</pre></details>}{a.description&&<p className="chart-description">{a.description}</p>}
     <div className="chart-stage"><div ref={host} className="chart-canvas" role="img" aria-label={a.title||'数据图表'}/>{loading&&<div className="chart-loading"><LoaderCircle size={17} className="spin"/>正在绘制图表</div>}{error&&<div className="inline-error chart-render-error">{error}</div>}</div>
     <div className="artifact-foot chart-foot">
       {onSource&&sources.length>0&&<div className="chart-source-links">{sources.map(id=><button className="source-chip" key={id} onClick={()=>onSource(id)}>来源 {id.slice(0,6)} <ArrowUpRight size={10}/></button>)}</div>}

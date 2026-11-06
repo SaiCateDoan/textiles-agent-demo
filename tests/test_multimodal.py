@@ -160,7 +160,7 @@ async def test_embedded_markdown_picture_has_precise_point_and_table_order(tmp_p
     data=base64.b64encode(png()).decode()
     p=tmp_path/'cloth.md';p.write_text(f'前文 ![布样](data:image/png;base64,{data}) 后文\n|批次|克重|\n|---|---|\n|A|145|\n尾段',encoding='utf8')
     e=await enrich(collect(p,'.md'),FakeVision())
-    assert e.blocks[0].images and e.blocks[1].kind=='table' and e.blocks[2].text=='尾段'
+    assert e.blocks[0].images and e.blocks[1].kind=='document_table' and e.blocks[2].text=='尾段'
     text=e.blocks[0].text
     assert text.index('前文')<text.index(marker(e.blocks[0].images[0]['id']))<text.index('后文')
 
@@ -172,9 +172,10 @@ async def test_xlsx_images_attach_to_actual_row_and_support_multiple(tmp_path):
     for color in ['navy','maroon']:s.add_image(XLImage(io.BytesIO(png(color))),'C3')
     p=tmp_path/'cloth.xlsx';w.save(p)
     e=await enrich(collect(p,'.xlsx'),FakeVision())
-    rows=[b for b in e.blocks if b.kind=='table']
-    assert not rows[0].images and len(rows[1].images)==2 and '行 3' in rows[1].locator
-    chunks=split_blocks(rows);assert len(chunks[1]['image_ids'])==2
+    rows=[b for b in e.blocks if b.kind=='visual']
+    assert len(rows)==2 and all(len(r.images)==1 and '行 3' in r.locator for r in rows)
+    chunks=split_blocks(rows);assert sum(len(c['image_ids']) for c in chunks)==2
+    assert len(e.datasets)==1 and e.datasets[0]['row_count']==2
 
 
 async def test_pptx_images_stay_on_their_slide(tmp_path):

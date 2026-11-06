@@ -28,6 +28,7 @@ from .pipeline import IngestionRunner
 from .async_utils import acquire_durable, durable_call
 from .turns import ProgressWriter
 from .responses import ResponseStreamError
+from .datasets import list_datasets, get_dataset, query_datasets
 
 log = logging.getLogger("textile")
 store = Store(settings.textile_data_dir)
@@ -193,6 +194,22 @@ def chunks(doc_id: str, limit: int = Query(100,ge=1,le=1000), offset: int = Quer
     return store.chunks(doc_id,limit,offset)
 
 
+@app.get("/api/documents/{doc_id}/datasets")
+def document_datasets(doc_id: str, offset: int = Query(0,ge=0)):
+    require_doc(doc_id)
+    return list_datasets(store,doc_id,offset=offset)
+
+
+@app.get("/api/datasets/{dataset_id}/preview")
+def dataset_preview(dataset_id: str, offset: int = Query(0,ge=0)):
+    try:
+        d = get_dataset(store,dataset_id)
+        result = query_datasets(store,[dataset_id],f'SELECT * FROM data ORDER BY "_source_row" LIMIT 50 OFFSET {offset}',"数据预览；按原始行号排序",max_rows=50,persist=False)
+        return {**result,"total":d["row_count"],"next_offset":offset+50 if offset+50<d["row_count"] else None}
+    except ValueError as exc:
+        raise HTTPException(422,str(exc)) from exc
+
+
 @app.get("/api/documents/{doc_id}")
 def document_detail(doc_id: str):
     return require_doc(doc_id)
@@ -275,6 +292,8 @@ async def edit_chunk(chunk_id: str, body: ChunkEdit):
         doc = require_doc(doc_id)
         current = await asyncio.to_thread(store.chunks,doc_id)
         target = next(c for c in current if c["id"] == chunk_id)
+        if target["kind"] in {"dataset","native_chart"} or await asyncio.to_thread(list_datasets,store,doc_id):
+            raise HTTPException(422,"数据集及图表说明由原文件生成，请修改原文件后重新导入；不能单独编辑目录使其与数据不一致")
         if target["revision"] != body.revision:
             raise HTTPException(409, "分块已被修改，请刷新后编辑")
         text = body.text.strip()
@@ -283,6 +302,12 @@ async def edit_chunk(chunk_id: str, body: ChunkEdit):
         if target["image_ids"] and Counter(ANCHOR.findall(text)) != Counter(target["image_ids"]):
             raise HTTPException(422, "请保留该分块的全部图片位置标记，不能拆分、删除或引入其他图片ID")
         target["text"] = text
+        if target["kind"] == "document_table":
+            lines = [line.strip() for line in text.splitlines() if line.strip().startswith("|")]
+            values = [[cell.strip().replace("&#124;","|").replace("<br>","\n") for cell in line.strip("|").split("|")] for line in lines]
+            if len(values)<3 or values[0]!=target["fields"]["headers"] or any(len(r)!=len(values[0]) for r in values[2:]) or len(values[2:])!=len(target["fields"]["rows"]):
+                raise HTTPException(422,"请保留Markdown表格表头、列数和数据行数，仅校正单元格内容")
+            target["fields"]["rows"] = values[2:]
         if target["kind"] == "table":
             # Editable row syntax mirrors ingestion and changes downstream chart values as well.
             fields = {}

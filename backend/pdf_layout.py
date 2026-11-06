@@ -24,7 +24,7 @@ def _join(parts):
     return out
 
 
-def page_blocks(page):
+def page_blocks(page, exclude=()):
     """Group fragments within blocks; rotate geometry BEFORE deciding reading order."""
     data = page.get_text("dict", flags=fitz.TEXTFLAGS_TEXT, sort=False)
     matrix = page.rotation_matrix
@@ -34,6 +34,9 @@ def page_blocks(page):
             continue
         lines = []
         for line in block.get("lines", []):
+            raw_box = fitz.Rect(line["bbox"])
+            if any((raw_box & fitz.Rect(box)).get_area() >= raw_box.get_area()*.5 for box in exclude):
+                continue
             # Span order is part of the source text line, not a word-level XY sort.
             text = "".join(span["text"] for span in line["spans"]).strip()
             if text:

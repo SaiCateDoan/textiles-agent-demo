@@ -29,14 +29,16 @@ async def agent_with_responses(storage,responses):
     return agent,requests
 
 
-async def test_commentary_tools_artifacts_final_are_streamed_and_preserved_in_order(storage,sample_root):
+async def test_commentary_tools_artifacts_final_are_streamed_and_preserved_in_order(storage,sample_root,monkeypatch):
     store,index=storage
     doc=load_doc(storage,sample_root/'02_定型工况实验_模拟.csv')
-    citation=store.chunks(doc)[0]['id']
-    source_ids=[r['id'] for r in store.chunks(doc)]
-    responses=[Message('我先确认资料。',[tool('t1','read_document',document_id=doc)]),
+    from backend.datasets import list_datasets
+    dataset=list_datasets(store,doc)[0]
+    citation='f'*16
+    monkeypatch.setattr('backend.datasets.uid',lambda:citation)
+    responses=[Message('我先确认资料。',[tool('t1','query_datasets',dataset_ids=[dataset['id']],sql='SELECT "定型温度_C", AVG("缩水率_pct") AS "均值" FROM data GROUP BY "定型温度_C" ORDER BY "定型温度_C"',description='按温度计算缩水率算术均值')]),
                Message('已找到实验表，接着计算图表和控件。',[
-                   tool('t2','create_chart',option={'series':[{'type':'line','data':[[150,5.1],[180,2.45]]}]},source_ids=source_ids),
+                   tool('t2','create_data_chart',query_id=citation,x='定型温度_C',y=['均值'],chart_type='line'),
                    tool('t3','create_scenario',document_id=doc,parameter='定型温度_C',metric='缩水率_pct')]),
                Message(f'结果仅供历史工况参考。[C:{citation}]')]
     agent,requests=await agent_with_responses(storage,responses)
@@ -51,7 +53,7 @@ async def test_commentary_tools_artifacts_final_are_streamed_and_preserved_in_or
     assert next(i for i,e in enumerate(events) if e[0]=='assistant_delta') < next(i for i,e in enumerate(events) if e[0]=='tool_start')
     assert next(i for i,e in enumerate(events) if e[0]=='artifact') < max(i for i,e in enumerate(events) if e[0]=='assistant_start')
     assert all(r['stream'] and r['reasoning']=={'effort':'none'} and 'previous_response_id' not in r for r in requests)
-    assert requests[0]['tools'][0]['name']=='list_documents' and 'function' not in requests[0]['tools'][0]
+    assert 'list_documents' in {t['name'] for t in requests[0]['tools']} and 'function' not in requests[0]['tools'][0]
     second=requests[1]['input']
     assert any(i['type']=='message' and i.get('role')=='assistant' for i in second)
     calls={i['call_id'] for i in second if i['type']=='function_call'}

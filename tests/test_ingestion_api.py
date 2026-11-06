@@ -58,7 +58,7 @@ def test_paginated_documents_and_chunks(client,storage):
 def test_failed_edit_keeps_active_version(client,storage,sample_root,monkeypatch):
     from conftest import load_doc
     store,index=storage
-    doc_id=load_doc(storage,sample_root/'01_MES生产日报_模拟.csv')
+    doc_id=load_doc(storage,sample_root/'10_文章图表数据_模拟.txt')
     row=store.chunks(doc_id)[0]
     original=index.stage
     def broken(*args):

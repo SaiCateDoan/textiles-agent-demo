@@ -9,11 +9,11 @@ def test_numbers_do_not_confuse_units_dates_and_ranges(value,expected):
 
 
 def test_chart_accepts_organized_data_without_column_bindings(storage,sample_root):
-    doc=load_doc(storage,sample_root/'01_MES生产日报_模拟.csv');s,idx=storage
+    doc=load_doc(storage,sample_root/'10_文章图表数据_模拟.txt');s,idx=storage
     option={'series':[{'type':'bar','data':[1.25,2.1,.85]}]}
     a=chart(s,option,[r['id'] for r in s.chunks(doc)],title='机台平均不良率')
     assert a['option']['series'][0]['data']==[1.25,2.1,.85]
-    assert len(a['source_ids'])==12 and a['data_origin']=='model_organized'
+    assert a['source_ids'] and a['data_origin']=='model_organized'
     assert 'group_by' not in a and 'metric' not in a
 
 
@@ -36,17 +36,17 @@ def test_lancedb_persistence_scope_and_deleted_metadata(storage,sample_root):
     d2=load_doc(storage,sample_root/'03_染整工艺单_模拟.md')
     hits=idx.search(s,'TX-202610-003 经向缩水 待复检',[d2])
     assert hits and all(h['document_id']==d2 for h in hits)
-    assert idx.db.open_table('chunks').count_rows()>12
+    assert idx.db.open_table('chunks').count_rows()>1
     s.execute('DELETE FROM documents WHERE id=?',(d2,))
     # Metadata remains authoritative even if a vector delete was interrupted.
     assert not idx.search(s,'经向缩水',[d2])
     idx.delete(d2)
-    assert idx.table.count_rows()==12
+    assert idx.table.count_rows()==1
     assert not s.chunks(d2)
 
 
 def test_stale_revisions_never_used(storage,sample_root):
-    s,idx=storage;doc=load_doc(storage,sample_root/'01_MES生产日报_模拟.csv')
+    s,idx=storage;doc=load_doc(storage,sample_root/'10_文章图表数据_模拟.txt')
     original=s.chunks(doc)
     for c in original:c['revision']=2
     s.replace_chunks(doc,original)
@@ -56,7 +56,7 @@ def test_stale_revisions_never_used(storage,sample_root):
 
 
 def test_chart_source_snapshot_matches_configuration_during_publish(storage,sample_root):
-    s,idx=storage;doc=load_doc(storage,sample_root/'01_MES生产日报_模拟.csv')
+    s,idx=storage;doc=load_doc(storage,sample_root/'10_文章图表数据_模拟.txt')
     result=chart(s,{'series':[{'type':'bar','data':[1.2]}]},[s.chunks(doc)[0]['id']])
     originals=result['_source_rows']
     changed=s.chunks(doc)

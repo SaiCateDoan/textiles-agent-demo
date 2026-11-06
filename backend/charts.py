@@ -67,6 +67,8 @@ def chart(store, option, source_ids, title=None, description="", *, evidence_sou
     if any(i not in by_id for i in ids):
         raise ValueError("部分来源不存在或已不可检索，请重新检索")
     rows=[by_id[i] for i in ids]
+    if any(r["kind"]=="dataset" for r in rows):
+        raise ValueError("数据集目录不是完整统计证据，请先query_datasets并使用create_data_chart")
     for row in rows:
         if document_ids is not None and row["document_id"] not in document_ids:
             raise ValueError("图表来源不在当前检索范围内")

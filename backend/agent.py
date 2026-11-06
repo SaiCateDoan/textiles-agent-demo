@@ -13,6 +13,7 @@ from .media import image_data_url
 from .responses import ResponseStreamError, replay_items, stream_response
 from .turns import TurnState
 from .store import uid
+from .datasets import list_datasets, query_datasets, query_source, data_chart
 
 
 def function(name, description, properties, required):
@@ -21,6 +22,9 @@ def function(name, description, properties, required):
 
 S = {"type": "string"}
 TOOLS = [
+    function("list_datasets", "列出可查询数据集、字段类型、示例、来源范围、公式缓存状态。大表统计先查看本工具。支持分页。", {"document_id":S,"offset":{"type":"integer"}}, []),
+    function("query_datasets", "用DuckDB只读SELECT查询1至4个数据集的完整记录。单表别名data，多表依次data1/data2等；列名用双引号。支持过滤、聚合、JOIN、排序、常见数学函数，禁止文件/网络/系统表/写操作/CTE。_source_row为原始行号。最多返回500行，截断不代表全量结果。description必须说明范围、单位和聚合口径。返回query_id可引用并用于create_data_chart。", {"dataset_ids":{"type":"array","items":S,"minItems":1,"maxItems":4},"sql":S,"description":S}, ["dataset_ids","sql","description"]),
+    function("create_data_chart", "从本轮query_datasets的实际结果直接制图，禁止自行改写数值。x为结果横轴列，y为1至8个结果数值列。饼图仅一个数值列。", {"query_id":S,"x":S,"y":{"type":"array","items":S},"chart_type":{"type":"string","enum":["bar","line","scatter","pie"]},"title":S}, ["query_id","x","y"]),
     function("list_documents", "分页列出可检索文档、ID及表头。每页最多50份；可按名称query筛选，用offset继续翻页。", {"query": S, "offset":{"type":"integer"}}, []),
     function("search_knowledge", "中文语义向量+BM25融合检索。可多次改写查询，返回带来源ID的原文。", {"query": S, "document_id": S}, ["query"]),
     function("read_document", "按顺序读取文档分块，补充检索证据。offset 从0开始，最多返回30块。", {"document_id": S, "offset": {"type": "integer"}}, ["document_id"]),
@@ -45,6 +49,8 @@ SYSTEM += """\n你可以先向用户简短说明正在做什么，然后继续�
 需要工具时，应在同一响应中发出实际 function_call，不要只承诺“接下来查询”却停止。
 可按“说明→检索→阶段性结论→继续计算/创建图表控件→最终答复”执行，按需使用，不为闲聊强行调用工具。
 最终答复应基于已完成的工具结果，不重复整段阶段性说明。"""
+
+SYSTEM += """\nCSV/Excel的dataset分块仅为目录和示例，不是完整数据。涉及筛选、精确查找、统计、排序、数学计算必须调用list_datasets与query_datasets，不得用检索样本心算全表。SQL在工具中执行；列名保留完整单位。整体比率优先使用SUM(分子)/NULLIF(SUM(分母),0)，区分算术均值和加权口径；仅有比率时不得虚构权重。JOIN前核实键和粒度，避免重复计数。公式缓存缺失或未验证时须说明，不能将缺失当零。query_datasets返回的query_id是可引用的[C:ID]证据，制图使用create_data_chart。文档内的document_table保留完整表头、行列和邻文，超过大小才按行组拆分；比较前读全所需行组。native_chart中的引用和缓存描述原图，不代表当前数据统计。"""
 
 
 class AgentState(TypedDict):
@@ -75,6 +81,7 @@ class TextileAgent:
             instructions += "\n当前仅允许访问这些文档ID：" + ",".join(document_ids)
         source_map = {}
         artifacts = []
+        query_ids = set()
         seen_images = set()
         seen_calls = set()
         sent_sources = {}
@@ -95,6 +102,17 @@ class TextileAgent:
                 source_map[row["id"]]["images"] = row.get("images", [])
 
         def execute(name, args):
+            if name == "list_datasets":
+                if args.get("document_id"):
+                    allowed(args["document_id"])
+                offset = max(0,int(args.get("offset",0)))
+                datasets = list_datasets(self.store,args.get("document_id"),document_ids,offset)
+                return {"datasets":datasets,"next_offset":offset+50 if len(datasets)==50 else None}
+            if name == "query_datasets":
+                result = query_datasets(self.store,**args,document_ids=document_ids)
+                query_ids.add(result["query_id"])
+                remember([query_source(result)])
+                return result
             if name == "list_documents":
                 offset = max(0,int(args.get("offset",0)))
                 docs = self.store.documents(50,offset,str(args.get("query",""))[:180],searchable=True,doc_ids=document_ids)
@@ -115,8 +133,12 @@ class TextileAgent:
                 page = self.store.chunks(args["document_id"],30,offset)
                 remember(page)
                 return {"chunks": page, "total": doc["chunks"], "next_offset": offset+30 if offset+30 < doc["chunks"] else None}
-            if name in {"create_chart", "create_scenario"}:
-                if name=="create_chart":
+            if name in {"create_chart", "create_scenario", "create_data_chart"}:
+                if name=="create_data_chart":
+                    if args.get("query_id") not in query_ids:
+                        raise ValueError("请先在本轮查询数据，再引用返回的query_id")
+                    artifact=data_chart(self.store,**args,document_ids=document_ids)
+                elif name=="create_chart":
                     artifact=chart(self.store,**args,evidence_sources=source_map,document_ids=document_ids)
                 else:
                     allowed(args["document_id"])

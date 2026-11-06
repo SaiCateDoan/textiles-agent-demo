@@ -2299,3 +2299,5 @@ main, .chat-scroll, .chat-history {
 .chart-table { padding:12px 0; }
 .chart-table td { max-width:360px; overflow-wrap:anywhere; }
 @media(max-width:640px) { .chart-canvas { height:360px; } }
+
+.dataset-browser{padding:16px;border-bottom:1px solid #dce7e0}.dataset-choice{display:flex;flex-direction:column;gap:5px;width:100%;text-align:left;padding:10px;margin:8px 0;border:1px solid #dce7e0;border-radius:8px;background:#fff}.dataset-choice.selected{border-color:#21735b;background:#f0f7f3}.dataset-choice span,.dataset-choice small{font-size:12px;color:#5f756b}.dataset-preview,.passage-markdown{overflow-x:auto;max-width:100%}.dataset-preview table,.passage-markdown table{border-collapse:collapse;font-size:12px;min-width:100%}.dataset-preview th,.dataset-preview td,.passage-markdown th,.passage-markdown td{border:1px solid #dce7e0;padding:7px;text-align:left;white-space:nowrap}.dataset-preview th,.passage-markdown th{background:#f0f7f3}.chart-query{padding:10px 18px;font-size:12px}.chart-query pre{white-space:pre-wrap;overflow-wrap:anywhere}

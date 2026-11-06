@@ -68,7 +68,7 @@ def test_vision_failure_is_visible_and_retry_retains_opt_in(client,storage,monke
     assert client.get(f'/api/documents/{doc_id}/chunks').json()[0]['images']
 
 
-def test_editing_table_row_keeps_anchored_image_and_numeric_fields(client,monkeypatch):
+def test_dataset_catalog_cannot_be_edited_and_images_keep_cell_location(client,monkeypatch):
     from backend import main
     from openpyxl import Workbook
     from openpyxl.drawing.image import Image as XLImage
@@ -79,7 +79,13 @@ def test_editing_table_row_keeps_anchored_image_and_numeric_fields(client,monkey
     buf=io.BytesIO();w.save(buf)
     r=client.post('/api/documents',data={'multimodal':'true'},files={'file':('rows.xlsx',buf.getvalue())})
     doc_id=r.json()['id'];assert wait_doc(client,doc_id)['status']=='ready'
-    row=client.get(f'/api/documents/{doc_id}/chunks').json()[0]
+    chunks=client.get(f'/api/documents/{doc_id}/chunks').json()
+    row=next(c for c in chunks if c['kind']=='dataset')
     text=row['text'].replace('克重: 145','克重: 146')
     r=client.put('/api/chunks/'+row['id'],json={'text':text,'revision':1})
-    assert r.status_code==200 and r.json()['fields']['克重']=='146' and len(r.json()['images'])==1
+    assert r.status_code==422 and '原文件' in r.json()['detail']
+    image=next(c for c in chunks if c['images'])
+    assert '行 2 列 3' in image['locator'] and len(image['images'])==1
+    datasets=client.get(f'/api/documents/{doc_id}/datasets').json()
+    preview=client.get(f"/api/datasets/{datasets[0]['id']}/preview").json()
+    assert preview['rows']==[[2,'A',145]] and preview['total']==1

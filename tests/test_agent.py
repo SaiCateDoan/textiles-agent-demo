@@ -45,13 +45,15 @@ class Stream:
             yield event
 
 
-async def test_langgraph_executes_artifacts_and_validates_citations(storage,sample_root):
+async def test_langgraph_executes_artifacts_and_validates_citations(storage,sample_root,monkeypatch):
     s,idx=storage;doc=load_doc(storage,sample_root/'02_定型工况实验_模拟.csv')
     calls=[]
     def call(name,args):
         return {'id':f'call_{len(calls)}_{name}','type':'function','function':{'name':name,'arguments':json.dumps(args)}}
-    source_ids=[r['id'] for r in s.chunks(doc)]
-    responses=[Message(calls=[call('read_document',{'document_id':doc})]),Message(calls=[call('create_chart',dict(option={'series':[{'type':'line','data':[[150,5.1],[180,2.45]]}]},source_ids=source_ids)),call('create_scenario',dict(document_id=doc,parameter='定型温度_C',metric='缩水率_pct'))]),Message('已生成图表与滑块。不存在的引用 [C:invented]')]
+    from backend.datasets import list_datasets
+    dataset=list_datasets(s,doc)[0]
+    monkeypatch.setattr('backend.datasets.uid',lambda:'f'*16)
+    responses=[Message(calls=[call('query_datasets',dict(dataset_ids=[dataset['id']],sql='SELECT "定型温度_C", AVG("缩水率_pct") AS "均值" FROM data GROUP BY "定型温度_C" ORDER BY "定型温度_C"',description='按温度计算缩水率算术均值，单位%'))]),Message(calls=[call('create_data_chart',dict(query_id='f'*16,x='定型温度_C',y=['均值'],chart_type='line')),call('create_scenario',dict(document_id=doc,parameter='定型温度_C',metric='缩水率_pct'))]),Message('已生成图表与滑块。不存在的引用 [C:invented]')]
     async def create(**kwargs):
         calls.append(kwargs)
         return responses.pop(0).stream()
@@ -62,7 +64,7 @@ async def test_langgraph_executes_artifacts_and_validates_citations(storage,samp
     async def emit(name,data):events.append((name,data))
     result=await a.run('test','分析工况',emit)
     assert {x['type'] for x in result['artifacts']}=={'chart','scenario'}
-    assert len(result['sources'])==15 and len(result['trace'])==3
+    assert len(result['sources'])==16 and len(result['trace'])==3
     assert '[C:invented]' not in result['content'] and '未能验证' in result['content']
     assert len(calls)==3 and len(events)>3
 

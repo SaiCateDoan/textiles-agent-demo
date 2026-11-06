@@ -34,7 +34,7 @@ def save_extraction(folder, extraction, fingerprint, name="parsed.json"):
         if image.preview:
             atomic_bytes(folder / (image.id + "-preview.png"),image.preview)
         candidates.append({k:getattr(image,k) for k in ("id","locator","width","height","source_type","standalone","bbox")} | {"preview":bool(image.preview),"metadata":getattr(image,"metadata",None)})
-    atomic_json(folder/name,{"fingerprint":fingerprint,"pages":extraction.pages,"ocr_pages":extraction.ocr_pages,"warnings":extraction.warnings,"blocks":[asdict(b) for b in extraction.blocks],"images":candidates})
+    atomic_json(folder/name,{"fingerprint":fingerprint,"pages":extraction.pages,"ocr_pages":extraction.ocr_pages,"warnings":extraction.warnings,"blocks":[asdict(b) for b in extraction.blocks],"images":candidates,"datasets":extraction.datasets,"charts":extraction.charts})
 
 
 def load_extraction(folder, fingerprint, name="parsed.json"):
@@ -45,6 +45,8 @@ def load_extraction(folder, fingerprint, name="parsed.json"):
     if value.get("fingerprint") != fingerprint:
         return None
     result = Extraction(blocks=[Block(**b) for b in value["blocks"]],pages=value["pages"],ocr_pages=value["ocr_pages"],warnings=value["warnings"])
+    result.datasets = value.get("datasets", [])
+    result.charts = value.get("charts", [])
     import re
     for item in value["images"]:
         if not re.fullmatch(r"[a-f0-9]{16}",item["id"]):

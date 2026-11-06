@@ -22,6 +22,7 @@ from .jobs import JobQueue, LeaseLost, RetryableError
 from .multimodal import VISION_PROMPT, VisualDecision, enrich, persist_images
 from .media import ANCHOR
 from .async_utils import acquire_durable, durable_call
+from .datasets import stage_datasets
 
 log = logging.getLogger("textile.ingestion")
 
@@ -193,7 +194,7 @@ class IngestionRunner:
         if doc["content_hash"] and content_hash != doc["content_hash"]:
             raise ValueError("原文件校验和发生变化，已停止处理")
         source = Path(__file__).parent
-        parser_version = digest(*( (source/name).read_bytes() for name in ("ingest.py","pdf_layout.py","multimodal.py","media.py","parse_worker.py","checkpoints.py")),(source.parent/"uv.lock").read_bytes(),sys.version_info[:2])
+        parser_version = digest(*( (source/name).read_bytes() for name in ("ingest.py","tabular.py","document_tables.py","pdf_layout.py","multimodal.py","media.py","parse_worker.py","checkpoints.py")),(source.parent/"uv.lock").read_bytes(),sys.version_info[:2])
         fingerprint = digest(content_hash,parser_version,doc["multimodal"],self.settings.max_multimodal_images)
         await durable_call(self.queue.stage,job,"parsing",10)
         result = await durable_call(load_extraction,folder,fingerprint)
@@ -230,12 +231,13 @@ class IngestionRunner:
             anchors = Counter(i for c in chunks for i in ANCHOR.findall(c["text"]))
             if actual != expected or anchors != expected:
                 raise ValueError("保留图片点位缺失、重复或归属异常，已停止发布")
+        staged_datasets = await durable_call(stage_datasets,self.store,doc["id"],job["revision"],result,chunks)
         prepared = await durable_call(self.store.prepare_chunks,chunks)
         await durable_call(self.queue.stage,job,"indexing",55)
         # Staged vectors do not replace the active revision. Only publish after
         # all vector batches and metadata preparation have succeeded.
         await durable_call(self.index.stage,doc["id"],chunks,job["revision"])
-        await durable_call(self.queue.publish,job,chunks,prepared,assets,result)
+        await durable_call(self.queue.publish,job,chunks,prepared,assets,result,staged_datasets)
         # Old versions are safe to delete after the metadata pointer is committed.
         # Failure here is maintenance debt, not a failed published document.
         try:
@@ -276,6 +278,12 @@ class IngestionRunner:
             if path.parent != (self.store.root/"uploads").resolve():
                 raise ValueError("Invalid upload path")
             path.unlink(missing_ok=True)
+            data_root = (self.store.root/"datasets").resolve()
+            data_folder = (data_root/doc_id).resolve()
+            if data_folder.parent != data_root:
+                raise ValueError("Invalid dataset folder")
+            if data_folder.exists():
+                shutil.rmtree(data_folder)
             self.store.execute("DELETE FROM garbage WHERE document_id=?",(doc_id,))
 
     def cleanup_checkpoints(self):

@@ -190,7 +190,8 @@ def collect(path, suffix, limit=60):
             elif child.tag==qn("w:tbl"):
                 table=Table(child,doc)
                 rows=[["\n".join(paragraph_text(p._p,f"Word 表 {i} 图片") for p in c.paragraphs) for c in r.cells] for r in table.rows]
-                out.blocks.extend(table_blocks(rows,f"Word 表 {i}"))
+                from .document_tables import docx_table
+                out.blocks.extend(docx_table(table,f"Word 表 {i}",rows))
         out.blocks.extend(footer_blocks)
     elif suffix == ".pptx":
         from pptx import Presentation
@@ -220,13 +221,14 @@ def collect(path, suffix, limit=60):
     elif suffix == ".xlsx":
         import openpyxl
         check_archive(path)
+        baseline = extract(path, suffix)
+        out.blocks, out.datasets, out.charts = baseline.blocks, baseline.datasets, baseline.charts
+        out.warnings.extend(baseline.warnings)
         with zipfile.ZipFile(path) as z:
             if not any(n.startswith("xl/media/") for n in z.namelist()):
                 return extract(path,suffix)
         wb=openpyxl.load_workbook(path,data_only=True)
         for ws in wb:
-            blocks=table_blocks(list(ws.iter_rows(values_only=True)),f"工作表 {ws.title}")
-            by_row={int(b.locator.rsplit("行 ",1)[1]):b for b in blocks if b.kind=="table"}
             for n,image in enumerate(ws._images,1):
                 anchor=image.anchor
                 if hasattr(anchor,"_from"):
@@ -234,11 +236,7 @@ def collect(path, suffix, limit=60):
                 else:
                     row,col=openpyxl.utils.cell.coordinate_to_tuple(str(anchor))
                 token=add(image._data(),f"工作表 {ws.title} · 行 {row} 列 {col} 图片 {n}","xlsx_image")
-                if row in by_row:
-                    by_row[row].text+="\n[附图] "+token
-                else:
-                    blocks.append(Block(token,f"工作表 {ws.title} · 图片行 {row}"))
-            out.blocks.extend(blocks)
+                out.blocks.append(Block(token,f"工作表 {ws.title} · 图片行 {row} 列 {col}", "visual"))
         wb.close()
         out.warnings.append("Excel公式读取缓存值，合并表头请整理为单行；图片按其锚定行关联。")
     elif suffix == ".md":
@@ -277,7 +275,8 @@ def collect(path, suffix, limit=60):
                 out.warnings.append("HTML外链/相对路径图片未随文件提供，未访问外部URL；请内嵌图片或改用PDF/DOCX。")
         tables=[]
         for n,table in enumerate(soup.find_all("table")):
-            tables.append(table_blocks([[c.get_text(" ",strip=True) for c in r.find_all(["th","td"])] for r in table.find_all("tr")],f"HTML 表 {n+1}"))
+            from .document_tables import html_table
+            tables.append(html_table(table,f"HTML 表 {n+1}"))
             table.replace_with(f"[[TABLE:{n}]]")
         for part in re.split(r"(\[\[TABLE:\d+\]\])",soup.get_text("\n",strip=True)):
             if part.startswith("[[TABLE:"):
@@ -306,6 +305,8 @@ def collect(path, suffix, limit=60):
         baseline.warnings.extend(out.warnings)
         return baseline
     out.blocks=[Block(clean(b.text),b.locator,b.kind,b.fields) for b in out.blocks if clean(b.text)]
+    from .document_tables import contextualize
+    contextualize(out.blocks)
     return out
 
 
@@ -351,7 +352,13 @@ async def enrich(extraction, analyzer, emit_progress=None):
     for block in extraction.blocks:
         ids=[i for i in ANCHOR.findall(block.text) if i in metadata]
         block.text=ANCHOR.sub(lambda m:replacements.get(m[1],m[0]),block.text)
-        block.fields={k:ANCHOR.sub(lambda m:replacements.get(m[1],m[0]),str(v)) for k,v in block.fields.items()}
+        def replace_fields(value):
+            if isinstance(value,dict):
+                return {k:replace_fields(v) for k,v in value.items()}
+            if isinstance(value,list):
+                return [replace_fields(v) for v in value]
+            return ANCHOR.sub(lambda m:replacements.get(m[1],m[0]),value) if isinstance(value,str) else value
+        block.fields=replace_fields(block.fields)
         block.images=[metadata[i] for i in ids if metadata[i]["decision"]=="retain"]
         if ids and not ANCHOR.sub("",block.text).strip():
             # An image-only paragraph becomes an independent descriptive passage.

@@ -112,14 +112,22 @@ class VectorIndex:
         with self.writer():
             self.table.delete(f"document_id = '{doc_id}' AND revision = {int(revision)}")
         size = settings.vector_write_batch_size
-        for start in range(0,len(chunks),size):
-            batch = chunks[start:start+size]
-            vectors = self.cached_vectors([retrieval_text(c) for c in batch])
+        indexed = []
+        for chunk in chunks:
+            text = retrieval_text(chunk)
+            if chunk["kind"] == "document_table" and len(text)>420:
+                heading = " | ".join(chunk.get("fields",{}).get("headers",[]))[:120]
+                indexed.extend((chunk,heading+"\n"+text[start:start+280]) for start in range(0,len(text),240))
+            else:
+                indexed.append((chunk,text))
+        for start in range(0,len(indexed),size):
+            batch = indexed[start:start+size]
+            vectors = self.cached_vectors([text for _,text in batch])
             with self.writer():
-                self.table.add([dict(id=c["id"],document_id=doc_id,revision=revision,vector=v) for c,v in zip(batch,vectors)])
+                self.table.add([dict(id=c["id"],document_id=doc_id,revision=revision,vector=v) for (c,_),v in zip(batch,vectors)])
         with self.writer():
             actual = self.table.count_rows(f"document_id = '{doc_id}' AND revision = {int(revision)}")
-            if actual != len(chunks):
+            if actual != len(indexed):
                 raise ValueError("向量数量与分块数量不一致，已停止发布")
 
     def cleanup(self, doc_id, revision):
@@ -180,7 +188,7 @@ class VectorIndex:
         distances = {}
         for rank, row in enumerate(ranked):
             cid = row["id"]
-            if cid in valid and row["revision"] == valid[cid]["revision"]:
+            if cid in valid and cid not in distances and row["revision"] == valid[cid]["revision"]:
                 fused[cid] += 1 / (60+rank+1)
                 distances[cid] = row["_distance"]
         for rank, row in enumerate(lexical):
@@ -212,7 +220,24 @@ def table_rows(store, doc_id):
     doc = store.document(doc_id)
     if not doc or not doc["searchable"]:
         raise ValueError("文档不存在或索引未就绪")
-    rows = [x for x in store.chunks(doc_id) if x["kind"] == "table" and x["fields"]]
+    from .datasets import list_datasets
+    datasets = list_datasets(store,doc_id)
+    if datasets:
+        if len(datasets)!=1 or datasets[0]["row_count"]>5000:
+            raise ValueError("工况控件支持单个数据区域且最多5000条观测；请先筛选为独立数据集，其他统计可使用query_datasets")
+        from .datasets import get_dataset
+        import pyarrow.parquet as pq
+        d = get_dataset(store,datasets[0]["id"])
+        records = pq.read_table(store.root/d["path"]).to_pylist()
+        return [dict(id=digest(d["id"],r["_source_row"])[:16], document_id=doc_id, document_name=doc["name"], revision=d["revision"], kind="table", images=[],
+                     locator=f"工作表 {d['sheet']} · 行 {r['_source_row']}", fields={k:v for k,v in r.items() if k!="_source_row"},
+                     text="; ".join(f"{k}: {v}" for k,v in r.items() if k!="_source_row")) for r in records]
+    rows = []
+    for x in store.chunks(doc_id):
+        if x["kind"]=="table" and x["fields"]:
+            rows.append(x)
+        elif x["kind"]=="document_table":
+            rows.extend({**x,"fields":dict(zip(x["fields"]["headers"],r))} for r in x["fields"]["rows"])
     if not rows:
         raise ValueError("该文档没有结构化表格，请导入 CSV/Excel 或可识别的带表格文档")
     return rows

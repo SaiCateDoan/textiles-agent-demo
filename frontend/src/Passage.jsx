@@ -1,5 +1,9 @@
 import React, {useState} from 'react';
 import {ArrowUpRight, Image as ImageIcon} from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+
+const Text=({text})=>text.includes('|')?<div className="passage-markdown"><ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml components={{img:()=>null}}>{text}</ReactMarkdown></div>:<p className="passage-text">{text}</p>;
 
 function Picture({image:im}) {
   const [failed,setFailed]=useState(false);
@@ -15,11 +19,11 @@ export function Passage({text='',images=[]}) {
   const pieces=[];let cursor=0;
   for(const match of text.matchAll(/\[\[IMG:([a-f0-9]{16})\]\]/g)) {
     if(!byId.has(match[1]))continue;
-    if(match.index>cursor)pieces.push(<p className="passage-text" key={`text-${cursor}`}>{text.slice(cursor,match.index)}</p>);
+    if(match.index>cursor)pieces.push(<Text key={`text-${cursor}`} text={text.slice(cursor,match.index)}/>);
     pieces.push(<Picture key={`${match[1]}-${match.index}`} image={byId.get(match[1])}/>);
     cursor=match.index+match[0].length;
   }
-  if(cursor<text.length)pieces.push(<p className="passage-text" key={`text-${cursor}`}>{text.slice(cursor)}</p>);
+  if(cursor<text.length)pieces.push(<Text key={`text-${cursor}`} text={text.slice(cursor)}/>);
   return <div className="passage">{pieces}</div>;
 }
 

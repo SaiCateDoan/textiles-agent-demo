@@ -143,7 +143,7 @@ class JobQueue:
             assignments = ",".join(f"{k}=?" for k in values)
             c.execute("UPDATE documents SET status=?,progress=?,error='',updated_at=?" + (","+assignments if assignments else "") + " WHERE id=? AND revision=?", (stage,progress,now(),*values.values(),job["document_id"],job["revision"]))
 
-    def publish(self, job, chunks, prepared, assets, result):
+    def publish(self, job, chunks, prepared, assets, result, datasets=None):
         # Everything expensive is prepared outside this short metadata transaction.
         with self.store.connect() as c:
             c.execute("BEGIN IMMEDIATE")
@@ -152,6 +152,8 @@ class JobQueue:
             if not row or row[0] != job["revision"]:
                 raise LeaseLost("目标文档版本已变化")
             self.store.write_chunks(c,job["document_id"],chunks,prepared,assets)
+            from .datasets import write_datasets
+            write_datasets(c,job["document_id"],job["revision"],datasets or [])
             c.execute("UPDATE documents SET active_revision=?,status='ready',progress=100,chunks=?,pages=?,ocr_pages=?,warnings=?,image_count=?,retained_images=?,error='',updated_at=? WHERE id=?",
                 (job["revision"],len(chunks),result.pages,result.ocr_pages,json.dumps(result.warnings,ensure_ascii=False),len(assets),sum(im["decision"]=="retain" for im in assets),now(),job["document_id"]))
             c.execute("UPDATE ingest_jobs SET state='done',stage='ready',owner='',lease_until=0,error='',updated_at=? WHERE id=?", (now(),job["id"]))
@@ -257,5 +259,6 @@ class JobQueue:
         with self.store.connect() as c:
             c.execute("BEGIN IMMEDIATE")
             self.check_mutation(c,mutation)
+            c.execute("DELETE FROM dataset_queries WHERE EXISTS (SELECT 1 FROM json_each(dataset_queries.payload,'$.datasets') d WHERE json_extract(d.value,'$.document_id')=?)",(mutation["document_id"],))
             c.execute("INSERT OR REPLACE INTO garbage SELECT id,suffix,? FROM documents WHERE id=?",(now(),mutation["document_id"]))
             c.execute("DELETE FROM documents WHERE id=?",(mutation["document_id"],))

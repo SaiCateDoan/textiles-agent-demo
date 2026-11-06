@@ -1,5 +1,4 @@
 """Local extraction: preserve table rows, page locators and OCR provenance."""
-import csv
 import io
 import re
 import unicodedata
@@ -13,11 +12,11 @@ from bs4 import BeautifulSoup
 from charset_normalizer import from_bytes
 from PIL import Image, ImageOps
 
-from .pdf_layout import needs_ocr, page_text
+from .pdf_layout import needs_ocr, page_text, page_blocks
+from .document_tables import table_blocks, html_table, docx_table, contextualize, table_chunks
 
 SUPPORTED = {".txt", ".md", ".csv", ".tsv", ".xlsx", ".xls", ".docx", ".pptx", ".html", ".htm", ".pdf", ".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
 MAX_PAGES = 200
-MAX_ROWS = 20000
 MAX_CHUNKS = 30000
 _ocr = None
 
@@ -38,6 +37,8 @@ class Extraction:
     ocr_pages: int = 0
     warnings: list[str] = field(default_factory=list)
     image_assets: list = field(default_factory=list)
+    datasets: list = field(default_factory=list)
+    charts: list = field(default_factory=list)
 
 
 def clean(text):
@@ -70,25 +71,6 @@ def ocr_image(data):
     return "\n".join(x[1] for x in lines), [float(x[2]) for x in lines]
 
 
-def table_blocks(rows, locator):
-    rows = [[clean(str(v)) if v is not None else "" for v in row] for row in rows]
-    # Keep physical row numbers when blank lines precede or interrupt a table.
-    indexed = [(i, r) for i, r in enumerate(rows, 1) if any(r)]
-    if len(indexed) < 2:
-        return [Block(" | ".join(indexed[0][1]), locator)] if indexed else []
-    headers = []
-    for i, h in enumerate(indexed[0][1]):
-        h = h or f"列{i+1}"
-        headers.append(h if h not in headers else f"{h}_{i+1}")
-    out = []
-    if len(indexed) > MAX_ROWS + 1:
-        raise ValueError(f"表格超过 {MAX_ROWS} 行，请按工作表或日期拆分后导入")
-    for i, row in indexed[1:]:
-        fields = dict(zip(headers, row + [""] * max(0, len(headers)-len(row))))
-        out.append(Block("; ".join(f"{k}: {v}" for k, v in fields.items()), f"{locator} · 行 {i}", "table", fields))
-    return out
-
-
 def check_archive(path):
     with zipfile.ZipFile(path) as z:
         if sum(x.file_size for x in z.infolist()) > 200 * 1024 * 1024:
@@ -96,6 +78,9 @@ def check_archive(path):
 
 
 def extract(path: Path, suffix: str) -> Extraction:
+    if suffix in {".csv", ".tsv", ".xlsx", ".xls"}:
+        from .tabular import extract_tabular
+        return extract_tabular(path, suffix)
     out = Extraction()
     if suffix in {".txt", ".md"}:
         text = decode(path.read_bytes())
@@ -107,46 +92,44 @@ def extract(path: Path, suffix: str) -> Extraction:
                 pending.clear()
         for line in text.splitlines():
             if "|" in line and line.strip().startswith("|"):
+                if plain:
+                    out.blocks.append(Block("\n".join(plain), "正文")); plain.clear()
                 if not re.fullmatch(r"[| :\-]+", line.strip()):
                     pending.append([c.strip() for c in line.strip().strip("|").split("|")])
             else:
                 flush()
                 plain.append(line)
         flush()
-        out.blocks.insert(0, Block("\n".join(plain), "正文"))
+        if plain:
+            out.blocks.append(Block("\n".join(plain), "正文"))
     elif suffix in {".html", ".htm"}:
         soup = BeautifulSoup(decode(path.read_bytes()), "html.parser")
         for tag in soup(["script", "style", "nav", "footer", "noscript"]):
             tag.decompose()
-        for i, table in enumerate(soup.find_all("table"), 1):
-            out.blocks.extend(table_blocks([[c.get_text(" ", strip=True) for c in r.find_all(["th", "td"])] for r in table.find_all("tr")], f"HTML 表 {i}"))
-            table.decompose()
-        out.blocks.append(Block(soup.get_text("\n", strip=True), "HTML 正文"))
-    elif suffix in {".csv", ".tsv"}:
-        text = decode(path.read_bytes())
-        delimiter = "\t" if suffix == ".tsv" else ","
-        out.blocks = table_blocks(list(csv.reader(io.StringIO(text), delimiter=delimiter)), "工作表 1")
-    elif suffix in {".xlsx", ".xls"}:
-        if suffix == ".xlsx":
-            import openpyxl
-            check_archive(path)
-            wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
-            for ws in wb:
-                out.blocks.extend(table_blocks(list(ws.iter_rows(values_only=True)), f"工作表 {ws.title}"))
-            wb.close()
-            out.warnings.append("Excel 公式读取缓存值；未缓存的公式为空，请先用 Excel 重算保存。合并表头建议清洗为单行。")
-        else:
-            import xlrd
-            wb = xlrd.open_workbook(path)
-            for ws in wb.sheets():
-                out.blocks.extend(table_blocks([ws.row_values(i) for i in range(ws.nrows)], f"工作表 {ws.name}"))
+        tables = []
+        for i, table in enumerate(soup.find_all("table")):
+            tables.append(html_table(table, f"HTML 表 {i+1}"))
+            table.replace_with(f"[[TABLE:{i}]]")
+        for part in re.split(r"(\[\[TABLE:\d+\]\])", soup.get_text("\n", strip=True)):
+            if part.startswith("[[TABLE:"):
+                out.blocks.extend(tables[int(part[8:-2])])
+            elif part.strip():
+                out.blocks.append(Block(part, "HTML 正文"))
     elif suffix == ".docx":
         from docx import Document
         check_archive(path)
         doc = Document(path)
-        out.blocks = [Block(p.text, f"段落 {i}") for i, p in enumerate(doc.paragraphs, 1) if p.text.strip()]
-        for i, t in enumerate(doc.tables, 1):
-            out.blocks.extend(table_blocks([[c.text for c in r.cells] for r in t.rows], f"Word 表 {i}"))
+        from docx.table import Table
+        from docx.text.paragraph import Paragraph
+        from docx.oxml.ns import qn
+        for i, child in enumerate(doc.element.body, 1):
+            if child.tag == qn("w:p"):
+                p = Paragraph(child, doc)
+                if p.text.strip():
+                    out.blocks.append(Block(p.text, f"段落 {i}"))
+            elif child.tag == qn("w:tbl"):
+                t = Table(child, doc)
+                out.blocks.extend(docx_table(t, f"Word 表 {i}"))
         with zipfile.ZipFile(path) as z:
             for f in z.namelist():
                 if f.startswith("word/media/") and Path(f).suffix.lower() in SUPPORTED:
@@ -189,11 +172,20 @@ def extract(path: Path, suffix: str) -> Extraction:
                     if scores and min(scores) < .8:
                         out.warnings.append(f"第 {i} 页部分 OCR 置信度低于 80%，请核对数字和单位")
                 else:
-                    out.blocks.append(Block(text, locator))
                     try:
-                        for j, table in enumerate(page.find_tables().tables, 1):
-                            out.blocks.extend(table_blocks(table.extract(), f"{locator} 表 {j}"))
+                        tables = page.find_tables().tables
+                        if not tables:
+                            out.blocks.append(Block(text, locator))
+                        else:
+                            events = [(rect.y0,rect.x0,[Block(t,locator)]) for rect,t in page_blocks(page,[t.bbox for t in tables])]
+                            for j, table in enumerate(tables,1):
+                                box = fitz.Rect(table.bbox)*page.rotation_matrix
+                                blocks = table_blocks(table.extract(),f"{locator} 表 {j}",structure={"bbox":list(table.bbox)})
+                                events.append((box.y0,box.x0,blocks))
+                            for _,_,blocks in sorted(events,key=lambda e:(round(e[0],1),e[1])):
+                                out.blocks.extend(blocks)
                     except Exception:
+                        out.blocks.append(Block(text, locator))
                         out.warnings.append(f"第 {i} 页表格结构未识别，保留页面文本")
                     # Mixed PDFs may contain valuable text inside images even with a text layer.
                     seen = set()
@@ -227,6 +219,7 @@ def extract(path: Path, suffix: str) -> Extraction:
     out.blocks = [Block(clean(b.text), b.locator, b.kind, b.fields) for b in out.blocks if clean(b.text)]
     if not out.blocks:
         raise ValueError("未提取到有效文本，图片可能模糊或空白；请检查原件")
+    contextualize(out.blocks)
     return out
 
 
@@ -235,6 +228,13 @@ def split_blocks(blocks, size=420, overlap=60):
         raise ValueError("分块长度必须大于重叠长度")
     chunks = []
     for block in blocks:
+        if block.kind == "document_table":
+            chunks.extend(table_chunks(block))
+            continue
+        if block.kind in {"dataset", "native_chart"}:
+            chunks.append(dict(text=block.text, locator=block.locator, kind=block.kind, fields=block.fields,
+                               images=block.images, image_ids=[im["id"] for im in block.images]))
+            continue
         if block.images:
             from .media import split_anchored
             if block.kind == "table" or (block.kind == "visual" and len(block.images) == 1):

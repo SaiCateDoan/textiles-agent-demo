@@ -162,8 +162,10 @@ async def test_partial_vision_success_survives_retry_without_reparsing(storage):
 
 
 async def test_failed_reindex_keeps_previous_version_searchable(storage,sample_root,monkeypatch):
+    from backend.datasets import list_datasets,query_datasets,get_dataset
     store,index = storage
     doc_id = load_doc(storage,sample_root/"01_MES生产日报_模拟.csv")
+    previous_dataset=list_datasets(store,doc_id)[0]
     runner = IngestionRunner(store,index,configuration(store.root),FakeVision,local_parser)
     runner.queue.enqueue(doc_id,1,True,True)
     assert store.document(doc_id)["searchable"] and store.document(doc_id)["active_revision"]==1
@@ -174,11 +176,15 @@ async def test_failed_reindex_keeps_previous_version_searchable(storage,sample_r
     monkeypatch.setattr(index,"stage",broken)
     await runner.execute(runner.queue.claim())
     assert store.document(doc_id)["status"]=="error"
+    assert query_datasets(store,[previous_dataset["id"]],"SELECT count(*) AS n FROM data","全表行数")["rows"]==[[12]]
     assert all(h["revision"]==1 for h in index.search(store,"定型A 不良率",[doc_id]))
     monkeypatch.setattr(index,"stage",original)
     runner.queue.enqueue(doc_id)
     await runner.execute(runner.queue.claim())
     assert store.document(doc_id)["active_revision"]==2
+    assert list_datasets(store,doc_id)[0]["revision"]==2
+    with pytest.raises(ValueError,match="版本"):
+        get_dataset(store,previous_dataset["id"])
     assert {r["revision"] for r in index.table.to_arrow().to_pylist()}=={2}
     assert index.search(store,"定型A 不良率",[doc_id])[0]["revision"]==2
 
@@ -241,11 +247,11 @@ def test_legacy_fts_backfill_and_media_association(storage,sample_root):
     store.execute("DELETE FROM chunk_fts")
     store.execute("UPDATE chunks SET fts_indexed=0")
     assert not store.lexical("定型A")
-    assert store.backfill_fts(3)==3
+    assert store.backfill_fts(3)==1
     assert store.lexical("定型A",[doc_id])
     while store.backfill_fts(3):
         pass
-    assert store.query("SELECT count(*) AS n FROM chunk_fts")[0]["n"]==12
+    assert store.query("SELECT count(*) AS n FROM chunk_fts")[0]["n"]==1
 
 
 async def test_100k_backlog_uses_fixed_workers_instead_of_100k_tasks(storage):
